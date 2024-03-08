@@ -1,0 +1,11 @@
+# Service specific values
+odeapiconfiguration:
+  name: ode-api-configuration
+  imageRepository: cosysdev.azurecr.io/ode-api-configuration
+  kafka:
+    groupId: 'odeConfig' 
+  probes:
+    enabled: false
+  service:
+    port: 80
+  resources: {}

@@ -1,0 +1,211 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.odeapiconfiguration.name }}
+data:
+  appsettings.Production.json: |
+    {
+      "Authentication": {
+          "Authority": "{{ .Values.url.identity }}"
+      },
+      "Kafka": {
+          "bootstrap": {
+              "servers": "{{ .Values.kafka.server }}"
+          },
+          "ssl": {
+            "ca": "{{.Values.kafka.ca}}",
+            "certificate": "{{.Values.kafka.certificate}}"
+          },
+          "sasl": {
+              "mechanism": "{{.Values.kafka.security.mechanism}}",
+              "username": "{{ .Values.kafka.userName }}"
+          },
+          "security": {
+              "protocol": "{{ .Values.kafka.security.protocol}}"
+          },
+          "groupId": "{{ .Values.odeapiconfiguration.kafka.groupId  }}"
+      },
+      "Mongo": {
+        "DbName": "{{ .Values.mongo.databaseName }}"
+      },
+      "CORSOrigins": "{{ .Values.url.cors }}",
+      "MobilityApi": "{{ .Values.url.mobilityApi }}"
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.odeapiconfiguration.name }}
+  labels:
+    app: {{ .Values.odeapiconfiguration.name }}
+    chart: {{ .Values.odeapiconfiguration.name }}
+    release: {{ .Release.Name }}
+  annotations:
+spec:
+  revisionHistoryLimit: 0
+  replicas: {{ .Values.odeapiconfiguration.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ .Values.odeapiconfiguration.name }}
+      release: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.odeapiconfiguration.name }}
+        release: {{ .Release.Name }}
+      annotations:
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: "kubernetes.io/hostname"
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              release: {{ .Release.Name }}
+      imagePullSecrets:
+        - name: {{ .Values.secrets.imagePullSecret }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Values.odeapiconfiguration.name }}
+      containers:
+        - name: {{ .Values.odeapiconfiguration.name }}
+          image: "{{ .Values.odeapiconfiguration.imageRepository }}:{{ .Values.odeapiconfiguration.imageTag  }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: Kafka__sasl__password
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.userName }}
+                  key: password
+            - name: ConnectionStrings__Mongo
+              valueFrom:
+                secretKeyRef:
+                  name: mongo-cs
+                  key: MongoRWConnectionString
+            - name: Authentication__ApiKey
+              valueFrom:
+                secretKeyRef:
+                  name: authentication
+                  key: clientSecret
+          volumeMounts:
+            - name: config
+              mountPath: /app/appsettings.Production.json
+              subPath: appsettings.Production.json
+              readOnly: true
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          {{- if .Values.odeapiconfiguration.probes.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          {{- end }}
+          resources:
+{{ toYaml .Values.odeapiconfiguration.resources | indent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.odeapiconfiguration.name }}
+  labels:
+    app: {{ .Values.odeapiconfiguration.name }}
+    chart: {{ .Values.odeapiconfiguration.name }}
+    release: {{ .Release.Name }}
+ 
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.odeapiconfiguration.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: {{ .Values.odeapiconfiguration.name }}
+    release: {{ .Release.Name }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    ingress.kubernetes.io/browser-xss-filter: "true"
+    ingress.kubernetes.io/content-type-nosniff: "true"
+    ingress.kubernetes.io/referrer-policy: unsafe-url
+    meta.helm.sh/release-name: {{ .Release.Name }}
+    nginx.ingress.kubernetes.io/cors-allow-headers: DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,pragma,expires,x-signalr-user-agent
+    nginx.ingress.kubernetes.io/cors-allow-origin: http://localhost:4200, https://*.cosysdev.com
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+  labels:
+    app.kubernetes.io/managed-by: Helm
+  name: {{ .Values.url.apiHost }}
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: {{ .Values.url.apiHost }}
+    http:
+      paths:
+      - backend:
+          service:
+            name: {{ .Values.service.authorizationApi }}
+            port:
+              name: http
+        path: /{{ .Values.url.authorizationPath }}/(.*)
+        pathType: ImplementationSpecific
+      - backend:
+          service:
+            name: ode-api-signal-status
+            port:
+              name: http
+        path: /{{ .Values.url.signalStatusPath }}/(.*)
+        pathType: ImplementationSpecific
+      - backend:
+          service:
+            name: ode-api-speed-status
+            port:
+              name: http
+        path: /{{ .Values.url.speedStatusPath }}/(.*)
+        pathType: ImplementationSpecific
+      - backend:
+          service:
+            name: ode-api-system-health
+            port:
+              name: http
+        path: /{{ .Values.url.systemHealthPath }}/(.*)
+        pathType: ImplementationSpecific
+      - backend:
+          service:
+            name: ode-tim-api
+            port:
+              name: http
+        path: /{{ .Values.url.timPath }}/(.*)
+        pathType: ImplementationSpecific
+      - backend:
+          service:
+            name: ode-vehicle-priority-api
+            port:
+              name: http
+        path: /{{ .Values.url.vehiclePriorityPath }}/(.*)
+        pathType: ImplementationSpecific
+      - backend:
+          service:
+            name: ode-reports-api
+            port:
+              name: http
+        path: /{{ .Values.url.reportsPath }}/(.*)
+        pathType: ImplementationSpecific
+      - backend:
+          service:
+            name: ode-api-configuration
+            port:
+              name: http
+        path: /{{ .Values.url.configurationPath }}/(.*)
+        pathType: ImplementationSpecific
+  tls:
+  - secretName: {{ .Values.ingress.tlsSecret }}

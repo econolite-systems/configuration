@@ -1,0 +1,4 @@
+apiVersion: v1
+description: ODE Configuration Change Worker
+name: "ode-configuration-change-worker"
+version: 0.1.0
